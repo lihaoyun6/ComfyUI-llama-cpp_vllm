@@ -1,6 +1,6 @@
 # ComfyUI-llama-cpp
 在ComfyUI中基于llama.cpp原生运行LLM/vLLM模型。  
-**[[📃English](./readme.md)]**
+**[[📃English](./README.md)]**
 
 ## 更新日志
 #### 2025-11-03
