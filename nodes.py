@@ -150,7 +150,10 @@ def get_model(config):
         print(f"Loading mmproj from {mmproj_path}")
         handler = get_chat_handler(model_type)
         if model_type == "Qwen3-VL":
-            chat_handler = handler(clip_model_path=mmproj_path, use_think_prompt=think_mode, verbose=False)
+            try:
+                chat_handler = handler(clip_model_path=mmproj_path, use_think_prompt=think_mode, verbose=False)
+            except Exception as e:
+                chat_handler = handler(clip_model_path=mmproj_path, force_reasoning=think_mode, verbose=False)
         else:
             chat_handler = handler(clip_model_path=mmproj_path, verbose=False)
     print(f"Loading model from {model_path}")
