@@ -5,6 +5,7 @@ import json
 import base64
 import random
 import torch
+import logging
 
 import numpy as np
 from PIL import Image, ImageDraw
@@ -21,8 +22,26 @@ from llama_cpp.llama_chat_format import (
     Qwen25VLChatHandler, Qwen3VLChatHandler
 )
 
-llm_extensions = ['.ckpt', '.pt', '.bin', '.pth', '.safetensors', '.gguf']
-folder_paths.folder_names_and_paths["LLM"] = ([os.path.join(folder_paths.models_dir, "LLM")], llm_extensions)
+
+def update_folder_names_and_paths(key, targets=[]):
+    # check for existing key
+    base = folder_paths.folder_names_and_paths.get(key, ([], {}))
+    base = base[0] if isinstance(base[0], (list, set, tuple)) else []
+    # find base key & add w/ fallback, sanity check + warning
+    target = next(
+        (x for x in targets if x in folder_paths.folder_names_and_paths), targets[0]
+    )
+    orig, _ = folder_paths.folder_names_and_paths.get(target, ([], {}))
+    folder_paths.folder_names_and_paths[key] = (orig or base, {".gguf"})
+    if base and base != orig:
+        logging.warning(
+            f"Unknown file list already present on key {key}: {base}")
+
+
+# Add a custom keys for files ending in .gguf
+update_folder_names_and_paths("llm_vl", ["unet", "diffusion_models"])
+
+
 preset_prompts = {
     "Normal - Describe": "Describe this @.",
     "Prompt Style - Tags": "Your task is to generate a clean list of comma-separated tags for a text-to-@ AI, based *only* on the visual information in the @. Limit the output to a maximum of 50 unique tags. Strictly describe visual elements like subject, clothing, environment, colors, lighting, and composition. Do not include abstract concepts, interpretations, marketing terms, or technical jargon (e.g., no 'SEO', 'brand-aligned', 'viral potential'). The goal is a concise list of visual descriptors. Avoid repeating tags.",
@@ -143,10 +162,10 @@ def get_model(config):
     n_ctx = config["n_ctx"]
     n_gpu_layers = config["n_gpu_layers"]
 
-    model_path = os.path.join(folder_paths.models_dir, 'LLM', model)
+    model_path = folder_paths.get_full_path("llm_vl", model)
     chat_handler = None
     if mmproj_model and mmproj_model != "None":
-        mmproj_path = os.path.join(folder_paths.models_dir, 'LLM', mmproj_model)
+        mmproj_path = folder_paths.get_full_path("llm_vl", mmproj_model) 
         if model_type == "None":
             raise ValueError('"model_type" cannot be None!')
         print(f"Loading mmproj from {mmproj_path}")
@@ -166,8 +185,8 @@ class llama_cpp_model_loader:
     @classmethod
     def INPUT_TYPES(s):
         return {"required": {
-            "model": (folder_paths.get_filename_list("LLM"),),
-            "mmproj_model": (["None"]+folder_paths.get_filename_list("LLM"), {"default": "None"}),
+            "model": ([x for x in folder_paths.get_filename_list("llm_vl") if "mmproj" not in x],),
+            "mmproj_model": (["None"]+[x for x in folder_paths.get_filename_list("llm_vl") if "mmproj" in x], {"default": "None"}),
             "model_type": (["None","Qwen3-VL", "Qwen2.5-VL", "LLaVA-1.5", "LLaVA-1.6", "Moondream2", "nanoLLaVA", "llama3-Vision-Alpha", "MiniCPM-v2.6", "MiniCPM-v4"], {"default": "None"}),
             "think_mode": ("BOOLEAN", {"default": False}),
             "n_ctx": ("INT", {"default": 8192, "min": 512, "max": 327680, "step": 128}),
