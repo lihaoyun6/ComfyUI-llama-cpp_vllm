@@ -651,6 +651,28 @@ class bbox_to_mask:
             
         return (torch.cat(masks, dim=0),)
 
+class bboxex_to_bbox:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "bboxes": ("BBOX",),
+                "image_index": ("INT", {"default": 0, "min": 0, "max": 1000000, "step": 1}),
+                "bbox_index": ("INT", {"default": -1, "min": -1, "max": 1000000, "step": 1}),
+            }
+        }
+    
+    RETURN_TYPES = ("BBOX",)
+    RETURN_NAMES = ("bbox",)
+    FUNCTION = "process"
+    CATEGORY = "llama-cpp-vllm"
+    
+    def process(self, bboxes, image_index, bbox_index):
+        if bbox_index > -1:
+            return ([bboxes[image_index][bbox_index]],)
+        return (bboxes[image_index],)
+        
+
 NODE_CLASS_MAPPINGS = {
     "llama_cpp_model_loader": llama_cpp_model_loader,
     "llama_cpp_instruct_adv": llama_cpp_instruct_adv,
@@ -659,6 +681,7 @@ NODE_CLASS_MAPPINGS = {
     "json_to_bbox": json_to_bbox,
     "bbox_to_segs": bbox_to_segs,
     "bbox_to_mask": bbox_to_mask,
+    "bboxex_to_bbox": bboxex_to_bbox,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -666,7 +689,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "llama_cpp_instruct_adv": "Llama-cpp Instruct (Advanced)",
     "llama_cpp_instruct": "Llama-cpp Instruct",
     "llama_cpp_parameters": "Llama-cpp Parameters",
-    "json_to_bbox": "JSON to BBOX",
-    "bbox_to_segs": "BBOX to SEGS",
-    "bbox_to_mask": "BBOX to MASK",
+    "json_to_bbox": "JSON to BBoxes",
+    "bbox_to_segs": "BBoxes to SEGS",
+    "bbox_to_mask": "BBoxes to MASK",
+    "bboxex_to_bbox": "BBoxes to BBox",
 }
