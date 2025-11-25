@@ -651,7 +651,7 @@ class bbox_to_mask:
             
         return (torch.cat(masks, dim=0),)
 
-class bboxex_to_bbox:
+class bboxes_to_bbox:
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -681,7 +681,7 @@ NODE_CLASS_MAPPINGS = {
     "json_to_bbox": json_to_bbox,
     "bbox_to_segs": bbox_to_segs,
     "bbox_to_mask": bbox_to_mask,
-    "bboxex_to_bbox": bboxex_to_bbox,
+    "bboxes_to_bbox": bboxes_to_bbox,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -692,5 +692,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "json_to_bbox": "JSON to BBoxes",
     "bbox_to_segs": "BBoxes to SEGS",
     "bbox_to_mask": "BBoxes to MASK",
-    "bboxex_to_bbox": "BBoxes to BBox",
+    "bboxes_to_bbox": "BBoxes to BBox",
 }
