@@ -220,7 +220,7 @@ class llama_cpp_instruct_adv:
                 "llamamodel": ("LLAMACPPMODEL",),
                 "parameters": ("LLAMACPPARAMS",),
                 "preset_prompt": (preset_tags, {"default": preset_tags[0]}),
-                "custom_prompt": ("STRING", {"default": "", "multiline": True, "placeholder": 'user prompt\nFor preset hints marked with an "*", this will be used to fill the placeholder (e.g., Object names in BBox detection)\n\nOtherwise, this will override the preset prompts.'}),
+                "custom_prompt": ("STRING", {"default": "", "multiline": True, "placeholder": 'user_prompt\n\nFor preset hints marked with an "*", this will be used to fill the placeholder (e.g., Object names in BBox detection)\nOtherwise, this will override the preset prompts.'}),
                 "system_prompt": ("STRING", {"multiline": True, "default": ""}),
                 "input_mode": (["one by one", "images", "video"], {
                     "default": "one by one",
