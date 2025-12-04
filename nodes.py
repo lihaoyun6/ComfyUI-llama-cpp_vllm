@@ -154,7 +154,6 @@ def get_model(config):
         print(f"Loading mmproj from {mmproj_path}")
         if chat_handler == "Qwen3-VL":
             try:
-                print(image_max_tokens, image_min_tokens)
                 _chat_handler = handler(
                     clip_model_path=mmproj_path,
                     force_reasoning=think_mode,
