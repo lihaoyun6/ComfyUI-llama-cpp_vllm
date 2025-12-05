@@ -660,7 +660,13 @@ class bboxes_to_bbox:
             "required": {
                 "bboxes": ("BBOX",),
                 "image_index": ("INT", {"default": 0, "min": 0, "max": 1000000, "step": 1}),
-                "bbox_index": ("INT", {"default": -1, "min": -1, "max": 1000000, "step": 1}),
+                "bbox_index": ("INT", {
+                    "default": 0,
+                    "min": -998,
+                    "max": 999,
+                    "step": 1,
+                    "tooltip": "BBox index in the image. Set to 999 to get all bboxes."
+                }),
             }
         }
     
@@ -670,7 +676,7 @@ class bboxes_to_bbox:
     CATEGORY = "llama-cpp-vllm"
     
     def process(self, bboxes, image_index, bbox_index):
-        if bbox_index > -1:
+        if bbox_index != 999:
             return ([bboxes[image_index][bbox_index]],)
         return (bboxes[image_index],)
         
