@@ -207,23 +207,32 @@ class llama_cpp_model_loader:
     @classmethod
     def INPUT_TYPES(s):
         return {"required": {
-            "model": (folder_paths.get_filename_list("LLM"),),
-            "mmproj_model": (["None"]+folder_paths.get_filename_list("LLM"), {"default": "None"}),
-            "chat_handler": (["None","Qwen3-VL", "Qwen2.5-VL", "LLaVA-1.5", "LLaVA-1.6", "Moondream2", "nanoLLaVA", "llama3-Vision-Alpha", "MiniCPM-v2.6", "MiniCPM-v4"], {"default": "None"}),
-            "think_mode": ("BOOLEAN", {"default": False}),
+            "model": (folder_paths.get_filename_list("LLM"), {"tooltip": "Select the model file from the LLM folder."}),
+            "mmproj_model": (["None"]+folder_paths.get_filename_list("LLM"), {
+                "default": "None",
+                "tooltip": "Select the multimodal projector file (mmproj) from the LLM folder."
+            }),
+            "chat_handler": (["None","Qwen3-VL", "Qwen2.5-VL", "LLaVA-1.5", "LLaVA-1.6", "Moondream2", "nanoLLaVA", "llama3-Vision-Alpha", "MiniCPM-v2.6", "MiniCPM-v4"], {
+                "default": "None",
+                "tooltip": "Select the chat handler for the model."
+            }),
+            "think_mode": ("BOOLEAN", {
+                "default": False,
+                "tooltip": "Enable thinking mode for models that support it."
+            }),
             "n_ctx": ("INT", {
                 "default": 8192,
                 "min": 512, "max": 327680, "step": 128,
-                "tooltip": "Context length limit."
+                "tooltip": "Context length limit. The maximum number of tokens in the context window."
             }),
             "n_gpu_layers": ("INT", {
                 "default": -1,
                 "min": -1, "max": 4096, "step": 1,
-                "tooltip": "Number of layers to keep on GPU."
+                "tooltip": "Number of layers to offload to the GPU. Set to -1 to offload all layers."
             }),
             "keep_model_loaded": ("BOOLEAN", {
                 "default": True,
-                "tooltip": "Keep model loaded between runs."
+                "tooltip": "Whether to keep the model loaded in memory after execution."
             }),
             }
         }
@@ -242,11 +251,23 @@ class llama_cpp_instruct_adv:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "llamamodel": ("LLAMACPPMODEL",),
-                "parameters": ("LLAMACPPARAMS",),
-                "preset_prompt": (preset_tags, {"default": preset_tags[0]}),
-                "custom_prompt": ("STRING", {"default": "", "multiline": True, "placeholder": 'user_prompt\n\nFor preset hints marked with an "*", this will be used to fill the placeholder (e.g., Object names in BBox detection)\nOtherwise, this will override the preset prompts.'}),
-                "system_prompt": ("STRING", {"multiline": True, "default": ""}),
+                "llamamodel": ("LLAMACPPMODEL", {"tooltip": "The loaded Llama model."}),
+                "parameters": ("LLAMACPPARAMS", {"tooltip": "Parameters for the Llama model."}),
+                "preset_prompt": (preset_tags, {
+                    "default": preset_tags[0],
+                    "tooltip": "Select a preset prompt."
+                }),
+                "custom_prompt": ("STRING", {
+                    "default": "",
+                    "multiline": True,
+                    "placeholder": 'user_prompt\n\nFor preset hints marked with an "*", this will be used to fill the placeholder (e.g., Object names in BBox detection)\nOtherwise, this will override the preset prompts.',
+                    "tooltip": "Enter a custom prompt or fill the placeholder in the preset prompt."
+                }),
+                "system_prompt": ("STRING", {
+                    "multiline": True,
+                    "default": "",
+                    "tooltip": "Enter a system prompt to guide the model's behavior."
+                }),
                 "input_mode": (["one by one", "images", "video"], {
                     "default": "one by one",
                     "tooltip": "one by one: Read one image at a time\n\nimages: Read all images at once\n\nvideo: Treat the input images as video"
@@ -262,10 +283,13 @@ class llama_cpp_instruct_adv:
                     "default": 256,
                     "tooltip": "Automatically scale down the video size."
                 }),
-                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "step": 1}),
+                "seed": ("INT", {
+                    "default": 0, "min": 0, "max": 0xffffffffffffffff, "step": 1,
+                    "tooltip": "Seed for random number generation."
+                }),
             },
             "optional": {
-                "images": ("IMAGE",),
+                "images": ("IMAGE", {"tooltip": "Input images or video frames."}),
             }
         }
     
@@ -379,10 +403,17 @@ class llama_cpp_instruct:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "llamamodel": ("LLAMACPPMODEL",),
-                "parameters": ("LLAMACPPARAMS",),
-                "prompt": ("STRING", {"multiline": True, "default": "",}),
-                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "step": 1}),
+                "llamamodel": ("LLAMACPPMODEL", {"tooltip": "The loaded Llama model."}),
+                "parameters": ("LLAMACPPARAMS", {"tooltip": "Parameters for the Llama model."}),
+                "prompt": ("STRING", {
+                    "multiline": True,
+                    "default": "",
+                    "tooltip": "Enter the user prompt."
+                }),
+                "seed": ("INT", {
+                    "default": 0, "min": 0, "max": 0xffffffffffffffff, "step": 1,
+                    "tooltip": "Seed for random number generation."
+                }),
             },
         }
     
@@ -433,21 +464,21 @@ class llama_cpp_parameters:
     @classmethod
     def INPUT_TYPES(s):
         return {"required": {
-                "max_tokens": ("INT", {"default": 1024, "min": 0, "max": 4096, "step": 1}),
-                "top_k": ("INT", {"default": 30, "min": 0, "max": 1000, "step": 1}),
-                "top_p": ("FLOAT", {"default": 0.9, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "min_p": ("FLOAT", {"default": 0.05, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "typical_p": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "temperature": ("FLOAT", {"default": 0.8, "min": 0.0, "max": 2.0, "step": 0.01}),
-                "repeat_penalty": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.01}),
-                "frequency_penalty": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "presence_penalty": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 2.0, "step": 0.01}),
+                "max_tokens": ("INT", {"default": 1024, "min": 0, "max": 4096, "step": 1, "tooltip": "Maximum number of tokens to generate."}),
+                "top_k": ("INT", {"default": 30, "min": 0, "max": 1000, "step": 1, "tooltip": "Limit the next token selection to the K most likely tokens."}),
+                "top_p": ("FLOAT", {"default": 0.9, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "Limit the next token selection to a subset of tokens with a cumulative probability of P."}),
+                "min_p": ("FLOAT", {"default": 0.05, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "Minimum probability for a token to be considered."}),
+                "typical_p": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "Typical probability parameter."}),
+                "temperature": ("FLOAT", {"default": 0.8, "min": 0.0, "max": 2.0, "step": 0.01, "tooltip": "Control the randomness of the generation."}),
+                "repeat_penalty": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.01, "tooltip": "Penalty for repeating tokens."}),
+                "frequency_penalty": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "Penalty based on the frequency of tokens in the text so far."}),
+                "presence_penalty": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 2.0, "step": 0.01, "tooltip": "Penalty based on the presence of tokens in the text so far."}),
                 #"tfs_z": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.01}),
-                "mirostat_mode": ("INT", {"default": 0, "min": 0, "max": 2, "step": 1}),
-                "mirostat_eta": ("FLOAT", {"default": 0.1, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "mirostat_tau": ("FLOAT", {"default": 5.0, "min": 0.0, "max": 10.0, "step": 0.01}),
-                "image_min_tokens": ("INT", {"default": 0, "min": 0, "max": 4096, "step": 32}),
-                "image_max_tokens": ("INT", {"default": 0, "min": 0, "max": 4096, "step": 32}),
+                "mirostat_mode": ("INT", {"default": 0, "min": 0, "max": 2, "step": 1, "tooltip": "Mirostat sampling mode."}),
+                "mirostat_eta": ("FLOAT", {"default": 0.1, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "Mirostat learning rate (eta)."}),
+                "mirostat_tau": ("FLOAT", {"default": 5.0, "min": 0.0, "max": 10.0, "step": 0.01, "tooltip": "Mirostat target entropy (tau)."}),
+                "image_min_tokens": ("INT", {"default": 0, "min": 0, "max": 4096, "step": 32, "tooltip": "Minimum number of tokens for image processing."}),
+                "image_max_tokens": ("INT", {"default": 0, "min": 0, "max": 4096, "step": 32, "tooltip": "Maximum number of tokens for image processing."}),
                 }
         }
     RETURN_TYPES = ("LLAMACPPARAMS",)
@@ -460,7 +491,7 @@ class llama_cpp_parameters:
 class llama_cpp_unload_model:
     @classmethod
     def INPUT_TYPES(s):
-        return {"required": {"any": (any_type,)}}
+        return {"required": {"any": (any_type, {"tooltip": "Any input to trigger the unload."})}}
     
     RETURN_TYPES = (any_type,)
     RETURN_NAMES = ("any",)
@@ -476,16 +507,19 @@ class json_to_bbox:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "json": ("STRING", {"forceInput": True}),
-                "mode": (["simple","Qwen3-VL", "Qwen2-VL"], {"default": "simple"}),
+                "json": ("STRING", {"forceInput": True, "tooltip": "Input JSON string containing bounding box information."}),
+                "mode": (["simple","Qwen3-VL", "Qwen2-VL"], {
+                    "default": "simple",
+                    "tooltip": "Mode for drawing bounding boxes."
+                }),
                 "label": ("STRING", {
                     "default":"",
                     "multiline": False,
-                    "tooltip": "Select only the BBoxes with specific labels."
+                    "tooltip": "Filter bounding boxes by label. Leave empty to select all."
                 }),
             },
             "optional": {
-                "image": ("IMAGE",),
+                "image": ("IMAGE", {"tooltip": "Input image to draw bounding boxes on."}),
             }
         }
     
@@ -536,10 +570,10 @@ class bbox_to_segs:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "bboxes": ("BBOX",),
-                "image": ("IMAGE",),
-                "dilation": ("INT", {"default": 10, "min": 0, "max": 200, "step": 1}),
-                "feather": ("INT", {"default": 0, "min": 0, "max": 100, "step": 1}),
+                "bboxes": ("BBOX", {"tooltip": "Input bounding boxes."}),
+                "image": ("IMAGE", {"tooltip": "Input image for cropping."}),
+                "dilation": ("INT", {"default": 10, "min": 0, "max": 200, "step": 1, "tooltip": "Amount to dilate the bounding box."}),
+                "feather": ("INT", {"default": 0, "min": 0, "max": 100, "step": 1, "tooltip": "Amount to feather the edges of the mask."}),
             }
         }
     
@@ -622,10 +656,10 @@ class bbox_to_mask:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "bboxes": ("BBOX",),
-                "image": ("IMAGE",),
-                "dilation": ("INT", {"default": 10, "min": 0, "max": 200, "step": 1}),
-                "feather": ("INT", {"default": 0, "min": 0, "max": 100, "step": 1}),
+                "bboxes": ("BBOX", {"tooltip": "Input bounding boxes."}),
+                "image": ("IMAGE", {"tooltip": "Input image for mask generation."}),
+                "dilation": ("INT", {"default": 10, "min": 0, "max": 200, "step": 1, "tooltip": "Amount to dilate the bounding box."}),
+                "feather": ("INT", {"default": 0, "min": 0, "max": 100, "step": 1, "tooltip": "Amount to feather the edges of the mask."}),
             }
         }
     
@@ -691,14 +725,14 @@ class bboxes_to_bbox:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "bboxes": ("BBOX",),
-                "image_index": ("INT", {"default": 0, "min": 0, "max": 1000000, "step": 1}),
+                "bboxes": ("BBOX", {"tooltip": "Input bounding boxes."}),
+                "image_index": ("INT", {"default": 0, "min": 0, "max": 1000000, "step": 1, "tooltip": "Index of the image to extract the bbox from."}),
                 "bbox_index": ("INT", {
                     "default": 0,
                     "min": -998,
                     "max": 999,
                     "step": 1,
-                    "tooltip": "BBox index in the image. Set to 999 to get all bboxes."
+                    "tooltip": "Index of the bounding box to extract. Set to 999 to extract all bounding boxes."
                 }),
             }
         }
