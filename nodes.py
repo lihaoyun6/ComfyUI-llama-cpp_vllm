@@ -17,35 +17,144 @@ import comfy.utils
 from llama_cpp import Llama
 from llama_cpp.llama_chat_format import (
     Llava15ChatHandler, Llava16ChatHandler, MoondreamChatHandler,
-    NanoLlavaChatHandler, Llama3VisionAlphaChatHandler, MiniCPMv26ChatHandler,
-    Qwen25VLChatHandler, Qwen3VLChatHandler
+    NanoLlavaChatHandler, Llama3VisionAlphaChatHandler, MiniCPMv26ChatHandler
 )
+
+chat_handlers = ["None", "LLaVA-1.5", "LLaVA-1.6", "Moondream2", "nanoLLaVA", "llama3-Vision-Alpha", "MiniCPM-v2.6", "MiniCPM-v4"]
+
+try:
+    from llama_cpp.llama_chat_format import Qwen25VLChatHandler
+    chat_handlers += ["Qwen2.5-VL"]
+except:
+    Qwen25VLChatHandler = None
+
+try:
+    from llama_cpp.llama_chat_format import Qwen3VLChatHandler
+    chat_handlers += ["Qwen3-VL", "Qwen3-VL-Thinking"]
+except:
+    Qwen3VLChatHandler = None
+    
+try:
+    from llama_cpp.llama_chat_format import (GLM46VChatHandler, LFM2VLChatHandler, GLM41VChatHandler)
+    chat_handlers += ["GLM-4.6V", "GLM-4.1V-Thinking", "LFM2-VL"]
+except:
+    GLM46VChatHandler  = None
+    LFM2VLChatHandler  = None
+    GLM41VChatHandler  = None
 
 class AnyType(str):
     def __ne__(self, __value: object) -> bool:
         return False
 
-class LLM_STORAGE:
+class LLAMA_CPP_STORAGE:
     llm = None
     chat_handler = None
     current_config = None
     
-    def clean(self):
-        self.llm.close()
+    @classmethod
+    def clean(cls):
         try:
-            self.chat_handler._exit_stack.close()
+            cls.llm.close()
+        except Exception:
+            pass
+            
+        try:
+            cls.chat_handler._exit_stack.close()
         except Exception:
             pass
         
-        self.llm = None
-        self.chat_handler = None
-        self.current_config = None
+        cls.llm = None
+        cls.chat_handler = None
+        cls.current_config = None
         
         gc.collect()
         mm.soft_empty_cache()
+    
+    @classmethod
+    def load_model(cls, config):
+        def get_chat_handler(chat_handler):
+            match chat_handler:
+                case "Qwen3-VL"|"Qwen3-VL-Thinking":
+                    return Qwen3VLChatHandler
+                case "Qwen2.5-VL":
+                    return Qwen25VLChatHandler
+                case "LLaVA-1.5":
+                    return Llava15ChatHandler
+                case "LLaVA-1.6":
+                    return Llava16ChatHandler
+                case "Moondream2":
+                    return MoondreamChatHandler
+                case "nanoLLaVA":
+                    return NanoLlavaChatHandler
+                case "llama3-Vision-Alpha":
+                    return Llama3VisionAlphaChatHandler
+                case "MiniCPM-v2.6":
+                    return MiniCPMv26ChatHandler
+                case "MiniCPM-v4":
+                    return MiniCPMv26ChatHandler
+                case "GLM-4.6V":
+                    return GLM46VChatHandler
+                case "GLM-4.1V-Thinking":
+                    return GLM41VChatHandler
+                case "LFM2-VL":
+                    return LFM2VLChatHandler
+                case "None":
+                    return None
+                case _:
+                    raise ValueError(f'Unknow model type: "{chat_handler}"')
+        
+        cls.clean()
+        cls.current_config = config.copy()
+        model = config["model"]
+        mmproj_model = config["mmproj_model"]
+        chat_handler = config["chat_handler"]
+        n_ctx = config["n_ctx"]
+        n_gpu_layers = config["n_gpu_layers"]
+        image_max_tokens = config["image_max_tokens"]
+        image_min_tokens = config["image_min_tokens"]
+        
+        model_path = os.path.join(folder_paths.models_dir, 'LLM', model)
+        handler = get_chat_handler(chat_handler)
+        if mmproj_model and mmproj_model != "None":
+            mmproj_path = os.path.join(folder_paths.models_dir, 'LLM', mmproj_model)
+            if chat_handler == "None":
+                raise ValueError('"chat_handler" cannot be None!')
+            print(f"Loading mmproj from {mmproj_path}")
+            if chat_handler in ["Qwen3-VL", "Qwen3-VL-Thinking"]:
+                think_mode = chat_handler=="Qwen3-VL-Thinking"
+                try:
+                    cls.chat_handler = handler(
+                        clip_model_path=mmproj_path,
+                        force_reasoning=think_mode,
+                        image_max_tokens=image_max_tokens,
+                        image_min_tokens=image_min_tokens,
+                        verbose=False)
+                except Exception as e:
+                    if image_max_tokens > 0 or image_min_tokens > 0:
+                        raise ValueError('"image_min_tokens" and "image_max_tokens" are unavailable! Please update llama-cpp-python.')
+                    else:
+                        try:
+                            cls.chat_handler = handler(clip_model_path=mmproj_path, force_reasoning=think_mode, verbose=False)
+                        except Exception as e:
+                            cls.chat_handler = handler(clip_model_path=mmproj_path, use_think_prompt=think_mode, verbose=False)
+            else:
+                cls.chat_handler = handler(clip_model_path=mmproj_path, verbose=False)
+        else:
+            if handler is not None:
+                cls.chat_handler = handler(verbose=False)
+        print(f"Loading model from {model_path}")
+        cls.llm = Llama(model_path, chat_handler=cls.chat_handler, n_gpu_layers=n_gpu_layers, n_ctx=n_ctx, verbose=False)
 
 any_type = AnyType("*")
-model_holder = LLM_STORAGE()
+
+if not hasattr(mm, "unload_all_models_backup"):
+    mm.unload_all_models_backup = mm.unload_all_models
+    def patched_unload_all_models(*args, **kwargs):
+        LLAMA_CPP_STORAGE.clean()
+        result = mm.unload_all_models_backup(*args, **kwargs)
+        return result
+    mm.unload_all_models = patched_unload_all_models
+    print("[llama-cpp_vlm] Model cleanup hook applied!")
 
 llm_extensions = ['.ckpt', '.pt', '.bin', '.pth', '.safetensors', '.gguf']
 folder_paths.folder_names_and_paths["LLM"] = ([os.path.join(folder_paths.models_dir, "LLM")], llm_extensions)
@@ -118,7 +227,7 @@ def draw_bbox(image, json, mode):
             except Exception:
                 label = "bbox"
         x0, y0, x1, y1 = item["bbox_2d"]
-        if mode in ["Qwen3-VL", "Qwen2-VL"]:
+        if mode in ["Qwen3-VL", "Qwen2.5-VL"]:
             size = 1000
             x0 = x0 / size * img.width
             y0 = y0 / size * img.height
@@ -136,84 +245,20 @@ def draw_bbox(image, json, mode):
         draw.text((x0+2, text_y), label, fill=(255,255,255))
     return torch.from_numpy(np.array(img).astype(np.float32) / 255.0).unsqueeze(0)
 
-def get_chat_handler(chat_handler):
-    match chat_handler:
-        case "Qwen3-VL":
-            return Qwen3VLChatHandler
-        case "Qwen2.5-VL":
-            return Qwen25VLChatHandler
-        case "LLaVA-1.5":
-            return Llava15ChatHandler
-        case "LLaVA-1.6":
-            return Llava16ChatHandler
-        case "Moondream2":
-            return MoondreamChatHandler
-        case "nanoLLaVA":
-            return NanoLlavaChatHandler
-        case "llama3-Vision-Alpha":
-            return Llama3VisionAlphaChatHandler
-        case "MiniCPM-v2.6":
-            return MiniCPMv26ChatHandler
-        case "MiniCPM-v4":
-            return MiniCPMv26ChatHandler
-        case "None":
-            return None
-        case _:
-            raise ValueError(f'Unknow model type: "{chat_handler}"')
-
-def get_model(config):
-    model = config["model"]
-    mmproj_model = config["mmproj_model"]
-    chat_handler = config["chat_handler"]
-    think_mode = config["think_mode"]
-    n_ctx = config["n_ctx"]
-    n_gpu_layers = config["n_gpu_layers"]
-    image_max_tokens = config["image_max_tokens"]
-    image_min_tokens = config["image_min_tokens"]
-    
-    model_path = os.path.join(folder_paths.models_dir, 'LLM', model)
-    handler = get_chat_handler(chat_handler)
-    if mmproj_model and mmproj_model != "None":
-        mmproj_path = os.path.join(folder_paths.models_dir, 'LLM', mmproj_model)
-        if chat_handler == "None":
-            raise ValueError('"chat_handler" cannot be None!')
-        print(f"Loading mmproj from {mmproj_path}")
-        if chat_handler == "Qwen3-VL":
-            try:
-                _chat_handler = handler(
-                    clip_model_path=mmproj_path,
-                    force_reasoning=think_mode,
-                    image_max_tokens=image_max_tokens,
-                    image_min_tokens=image_min_tokens,
-                    verbose=False)
-            except Exception as e:
-                if image_max_tokens > 0 or image_min_tokens > 0:
-                    raise ValueError('"image_min_tokens" and "image_max_tokens" are unavailable! Please update llama-cpp-python.')
-                else:
-                    try:
-                        _chat_handler = handler(clip_model_path=mmproj_path, force_reasoning=think_mode, verbose=False)
-                    except Exception as e:
-                        _chat_handler = handler(clip_model_path=mmproj_path, use_think_prompt=think_mode, verbose=False)
-        else:
-            _chat_handler = handler(clip_model_path=mmproj_path, verbose=False)
-    else:
-        if handler is not None:
-            _chat_handler = handler(verbose=False)
-    print(f"Loading model from {model_path}")
-    llm = Llama(model_path, chat_handler=_chat_handler, n_gpu_layers=n_gpu_layers, n_ctx=n_ctx, verbose=False)
-    return (_chat_handler, llm)
-
 class llama_cpp_model_loader:
     @classmethod
     def INPUT_TYPES(s):
+        all_llms = folder_paths.get_filename_list("LLM")
+        model_list = [f for f in all_llms if "mmproj" not in f.lower()]
+        mmproj_list = [f for f in all_llms if "mmproj" in f.lower()]
+            
         return {"required": {
-            "model": (folder_paths.get_filename_list("LLM"),),
-            "mmproj_model": (["None"]+folder_paths.get_filename_list("LLM"), {"default": "None"}),
-            "chat_handler": (["None","Qwen3-VL", "Qwen2.5-VL", "LLaVA-1.5", "LLaVA-1.6", "Moondream2", "nanoLLaVA", "llama3-Vision-Alpha", "MiniCPM-v2.6", "MiniCPM-v4"], {"default": "None"}),
-            "think_mode": ("BOOLEAN", {"default": False}),
+            "model": (model_list,),
+            "mmproj_model": (["None"]+mmproj_list, {"default": "None"}),
+            "chat_handler": (chat_handlers, {"default": "None"}),
             "n_ctx": ("INT", {
                 "default": 8192,
-                "min": 512, "max": 327680, "step": 128,
+                "min": 1024, "max": 327680, "step": 128,
                 "tooltip": "Context length limit."
             }),
             "n_gpu_layers": ("INT", {
@@ -221,35 +266,61 @@ class llama_cpp_model_loader:
                 "min": -1, "max": 4096, "step": 1,
                 "tooltip": "Number of layers to keep on GPU."
             }),
-            "keep_model_loaded": ("BOOLEAN", {
-                "default": True,
-                "tooltip": "Keep model loaded between runs."
-            }),
+            "image_min_tokens": ("INT", {"default": 0, "min": 0, "max": 4096, "step": 32}),
+            "image_max_tokens": ("INT", {"default": 0, "min": 0, "max": 4096, "step": 32}),
             }
         }
 
     RETURN_TYPES = ("LLAMACPPMODEL",)
-    RETURN_NAMES = ("llamamodel",)
+    RETURN_NAMES = ("llama_model",)
     FUNCTION = "loadmodel"
-    CATEGORY = "llama-cpp-vllm"
+    CATEGORY = "llama-cpp-vlm"
+    
+    @classmethod
+    def IS_CHANGED(s, model, mmproj_model, chat_handler, n_ctx, n_gpu_layers, image_min_tokens, image_max_tokens):
+        if LLAMA_CPP_STORAGE.llm is None:
+            return float("NaN") 
+        
+        custom_config = {
+            "model": model,
+            "mmproj_model": mmproj_model,
+            "chat_handler":chat_handler,
+            "n_ctx": n_ctx,
+            "n_gpu_layers": n_gpu_layers,
+            "image_min_tokens": image_min_tokens,
+            "image_max_tokens": image_max_tokens
+        }
+        config_str = json.dumps(custom_config, sort_keys=True, ensure_ascii=False)
+        return config_str
 
-    def loadmodel(self, model, mmproj_model, chat_handler, think_mode, n_ctx, n_gpu_layers, keep_model_loaded):
-        custom_config = {"model": model, "mmproj_model": mmproj_model, "chat_handler":chat_handler, "think_mode": think_mode, "n_ctx": n_ctx, "n_gpu_layers": n_gpu_layers, "keep_model_loaded": keep_model_loaded}
-        return (custom_config,)
+    def loadmodel(self, model, mmproj_model, chat_handler, n_ctx, n_gpu_layers, image_min_tokens, image_max_tokens):
+        custom_config = {
+            "model": model,
+            "mmproj_model": mmproj_model,
+            "chat_handler":chat_handler,
+            "n_ctx": n_ctx,
+            "n_gpu_layers": n_gpu_layers,
+            "image_min_tokens": image_min_tokens,
+            "image_max_tokens": image_max_tokens
+        }
+        if not LLAMA_CPP_STORAGE.llm or LLAMA_CPP_STORAGE.current_config != custom_config:
+            print("[llama-cpp_vlm] Loading model...")
+            LLAMA_CPP_STORAGE.load_model(custom_config)
+        return (LLAMA_CPP_STORAGE,)
 
 class llama_cpp_instruct_adv:
     @classmethod
     def INPUT_TYPES(s):
         return {
             "required": {
-                "llamamodel": ("LLAMACPPMODEL",),
+                "llama_model": ("LLAMACPPMODEL",),
                 "parameters": ("LLAMACPPARAMS",),
                 "preset_prompt": (preset_tags, {"default": preset_tags[0]}),
                 "custom_prompt": ("STRING", {"default": "", "multiline": True, "placeholder": 'user_prompt\n\nFor preset hints marked with an "*", this will be used to fill the placeholder (e.g., Object names in BBox detection)\nOtherwise, this will override the preset prompts.'}),
                 "system_prompt": ("STRING", {"multiline": True, "default": ""}),
                 "input_mode": (["one by one", "images", "video"], {
                     "default": "one by one",
-                    "tooltip": "one by one: Read one image at a time\n\nimages: Read all images at once\n\nvideo: Treat the input images as video"
+                    "tooltip": "one by one: Read one image at a time\nimages: \tRead all images at once\nvideo: \tTreat the input images as video"
                 }),
                 "max_frames": ("INT", {
                     "default": 24,
@@ -263,171 +334,94 @@ class llama_cpp_instruct_adv:
                     "tooltip": "Automatically scale down the video size."
                 }),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "step": 1}),
+                "force_offload": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "Unload the model after inference."
+                }),
             },
             "optional": {
                 "images": ("IMAGE",),
+                "queue_handler": (any_type, {"tooltip": "Used to control the execution order of instruct nodes."}),
             }
         }
     
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("output",)
     FUNCTION = "process"
-    CATEGORY = "llama-cpp-vllm"
+    CATEGORY = "llama-cpp-vlm"
     
-    def process(self, llamamodel, parameters, preset_prompt, custom_prompt, system_prompt, input_mode, max_frames, video_size, seed, images=None):
-        try:
-            mm.soft_empty_cache()
-            keep_model_loaded = llamamodel.get('keep_model_loaded', True)
-            llamamodel['image_min_tokens'] = parameters.get('image_min_tokens', 0) 
-            llamamodel['image_max_tokens'] = parameters.get('image_max_tokens', 0) 
-            filtered_params = {k: v for k, v in parameters.items() if k not in {'image_min_tokens', 'image_max_tokens'}}
-            video_input = input_mode == "video"
+    def process(self, llama_model, parameters, preset_prompt, custom_prompt, system_prompt, input_mode, max_frames, video_size, seed, force_offload, images=None, queue_handler=None):
+        if not llama_model.llm:
+            raise RuntimeError("The model has been unloaded or failed to load!")
+        
+        video_input = input_mode == "video"
+        messages = []
+        system_prompts = "请将输入的图片序列当做视频而不是静态帧序列, " + system_prompt if video_input else system_prompt
+        if system_prompts.strip():
+            messages.append({"role": "system", "content": system_prompts})
             
-            if not model_holder.llm or model_holder.current_config != llamamodel:
-                print("[llama-cpp_vllm] Reloading model...")
-                if model_holder.llm:
-                    model_holder.llm.close()
-                    try:
-                        model_holder.chat_handler._exit_stack.close()
-                    except Exception:
-                        pass
-                model_holder.current_config = llamamodel.copy()
-                model_holder.chat_handler, model_holder.llm = get_model(llamamodel)
-            mm.throw_exception_if_processing_interrupted()
+        user_content = []
+        if custom_prompt.strip() and "*" not in preset_prompt:
+            user_content.append({"type": "text", "text": custom_prompt})
+        else:
+            p = preset_prompts[preset_prompt].replace("#", custom_prompt.strip()).replace("@", "video" if video_input else "image")
+            user_content.append({"type": "text", "text": p})
             
-            messages = []
-            
-            system_prompts = "请将输入的图片序列当做视频而不是静态帧序列, " + system_prompt if video_input else system_prompt
-            if system_prompts.strip():
-                messages.append({"role": "system", "content": system_prompts})
+        if images is not None:
+            if not hasattr(llama_model.chat_handler, "clip_model_path") or llama_model.chat_handler.clip_model_path is None:
+                 raise ValueError("Image input detected, but the loaded model is not configured with a vision module (mmproj).")
                 
-            user_content = []
-            if custom_prompt.strip() and "*" not in preset_prompt:
-                user_content.append({"type": "text", "text": custom_prompt})
+            frames = images
+            if video_input:
+                indices = np.linspace(0, len(images) - 1, max_frames, dtype=int)
+                frames = [images[i] for i in indices]
+                
+            if input_mode == "one by one":
+                text = []
+                image_content = {
+                    "type": "image_url",
+                    "image_url": {"url": ""}
+                }
+                user_content.append(image_content)
+                messages.append({"role": "user", "content": user_content})
+                for i, image in enumerate(frames):
+                    if mm.processing_interrupted():
+                        raise mm.InterruptProcessingException()
+                    print(f"[llama-cpp_vlm] Reading image {i+1}/{len(frames)}...")
+                    data = image2base64(np.clip(255.0 * image.cpu().numpy().squeeze(), 0, 255).astype(np.uint8))
+                    for item in user_content:
+                        if item.get("type") == "image_url":
+                            item["image_url"]["url"] = f"data:image/jpeg;base64,{data}"
+                            break
+                    output = llama_model.llm.create_chat_completion(messages=messages, seed=seed, **parameters)
+                    _text = output['choices'][0]['message']['content']
+                    _text = _text[2:].lstrip() if _text.startswith(": ") else _text.lstrip() 
+                    text.append(_text)
             else:
-                p = preset_prompts[preset_prompt].replace("#", custom_prompt.strip()).replace("@", "video" if video_input else "image")
-                user_content.append({"type": "text", "text": p})
-                
-            if images is not None:
-                if not hasattr(model_holder.chat_handler, "clip_model_path") or model_holder.chat_handler.clip_model_path is None:
-                     raise ValueError("Image input detected, but the loaded model is not configured with a vision module (mmproj).")
-                    
-                frames = images
-                if video_input:
-                    indices = np.linspace(0, len(images) - 1, max_frames, dtype=int)
-                    frames = [images[i] for i in indices]
-                    
-                if input_mode == "one by one":
-                    texts = []
+                for image in frames:
+                    if video_input:
+                        data = image2base64(scale_image(image, video_size))
+                    else:
+                        data = image2base64(np.clip(255.0 * image.cpu().numpy().squeeze(), 0, 255).astype(np.uint8))
                     image_content = {
                         "type": "image_url",
-                        "image_url": {"url": ""}
+                        "image_url": {"url": f"data:image/jpeg;base64,{data}"}
                     }
                     user_content.append(image_content)
-                    messages.append({"role": "user", "content": user_content})
-                    for i, image in enumerate(frames):
-                        mm.throw_exception_if_processing_interrupted()
-                        print(f"[llama-cpp_vllm] Reading image {i+1}/{len(frames)}...")
-                        data = image2base64(np.clip(255.0 * image.cpu().numpy().squeeze(), 0, 255).astype(np.uint8))
-                        for item in user_content:
-                            if item.get("type") == "image_url":
-                                item["image_url"]["url"] = f"data:image/jpeg;base64,{data}"
-                                break
-                        output = model_holder.llm.create_chat_completion(messages=messages, seed=seed, **filtered_params)
-                        text = output['choices'][0]['message']['content']
-                        text = text[2:].lstrip() if text.startswith(": ") else text.lstrip() 
-                        texts.append(text)
-                        
-                    if not keep_model_loaded:
-                        model_holder.clean()
-                    return (texts,)
-                else:
-                    for image in frames:
-                        mm.throw_exception_if_processing_interrupted()
-                        if video_input:
-                            data = image2base64(scale_image(image, video_size))
-                        else:
-                            data = image2base64(np.clip(255.0 * image.cpu().numpy().squeeze(), 0, 255).astype(np.uint8))
-                        image_content = {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/jpeg;base64,{data}"}
-                        }
-                        user_content.append(image_content)
-                        
-                    messages.append({"role": "user", "content": user_content})
-                    output = model_holder.llm.create_chat_completion(messages=messages, seed=seed, **filtered_params)
-                    text = output['choices'][0]['message']['content']
-                    text = text[2:].lstrip() if text.startswith(": ") else text.lstrip() 
-            else:
-                parameters.pop("image_min_tokens", None)
-                parameters.pop("image_max_tokens", None)
+                    
                 messages.append({"role": "user", "content": user_content})
-                output = model_holder.llm.create_chat_completion(messages=messages, seed=seed, **parameters)
+                output = llama_model.llm.create_chat_completion(messages=messages, seed=seed, **parameters)
                 text = output['choices'][0]['message']['content']
                 text = text[2:].lstrip() if text.startswith(": ") else text.lstrip() 
-                mm.throw_exception_if_processing_interrupted()
-            if not keep_model_loaded:
-                model_holder.clean()
-                
-            return (text,)
-        except:
-            model_holder.clean()
-            raise mm.InterruptProcessingException()
-
-class llama_cpp_instruct:
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "llamamodel": ("LLAMACPPMODEL",),
-                "parameters": ("LLAMACPPARAMS",),
-                "prompt": ("STRING", {"multiline": True, "default": "",}),
-                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "step": 1}),
-            },
-        }
-    
-    RETURN_TYPES = ("STRING", )
-    RETURN_NAMES = ("output", )
-    FUNCTION = "process"
-    CATEGORY = "llama-cpp-vllm"
-    
-    def process(self, llamamodel, parameters, prompt, seed):
-        try:
-            mm.soft_empty_cache()
-            keep_model_loaded = llamamodel.get('keep_model_loaded', True)
-            llamamodel['image_min_tokens'] = parameters.get('image_min_tokens', 0) 
-            llamamodel['image_max_tokens'] = parameters.get('image_max_tokens', 0) 
-            filtered_params = {k: v for k, v in parameters.items() if k not in {'image_min_tokens', 'image_max_tokens'}}
-            
-            if not model_holder.llm or model_holder.current_config != llamamodel:
-                print("[llama-cpp_vllm] Reloading model...")
-                if model_holder.llm:
-                    model_holder.llm.close()
-                    try:
-                        model_holder.chat_handler._exit_stack.close()
-                    except Exception:
-                        pass
-                model_holder.current_config = llamamodel.copy()
-                model_holder.chat_handler, model_holder.llm = get_model(llamamodel)
-            mm.throw_exception_if_processing_interrupted()
-            
-            messages = []
-            user_content = []
-            user_content.append({"type": "text", "text": prompt})
+        else:
             messages.append({"role": "user", "content": user_content})
-            
-            output = model_holder.llm.create_chat_completion(messages=messages, seed=seed, **parameters)
+            output = llama_model.llm.create_chat_completion(messages=messages, seed=seed, **parameters)
             text = output['choices'][0]['message']['content']
-            text = text[2:].lstrip() if text.startswith(": ") else text.lstrip() 
-            mm.throw_exception_if_processing_interrupted()
-            
-            if not keep_model_loaded:
-                model_holder.clean()
-            
-            return (text,)
-        except:
-            model_holder.clean()
-            raise mm.InterruptProcessingException()
+            text = text[2:].lstrip() if text.startswith(": ") else text.lstrip()
+        
+        if force_offload:
+            llama_model.clean()
+        return (text,)
 
 class llama_cpp_parameters:
     @classmethod
@@ -446,14 +440,12 @@ class llama_cpp_parameters:
                 "mirostat_mode": ("INT", {"default": 0, "min": 0, "max": 2, "step": 1}),
                 "mirostat_eta": ("FLOAT", {"default": 0.1, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "mirostat_tau": ("FLOAT", {"default": 5.0, "min": 0.0, "max": 10.0, "step": 0.01}),
-                "image_min_tokens": ("INT", {"default": 0, "min": 0, "max": 4096, "step": 32}),
-                "image_max_tokens": ("INT", {"default": 0, "min": 0, "max": 4096, "step": 32}),
                 }
         }
     RETURN_TYPES = ("LLAMACPPARAMS",)
     RETURN_NAMES = ("parameters",)
     FUNCTION = "process"
-    CATEGORY = "llama-cpp-vllm"
+    CATEGORY = "llama-cpp-vlm"
     def process(self, **kwargs):
         return (kwargs,)
     
@@ -465,10 +457,10 @@ class llama_cpp_unload_model:
     RETURN_TYPES = (any_type,)
     RETURN_NAMES = ("any",)
     FUNCTION = "process"
-    CATEGORY = "llama-cpp-vllm"
+    CATEGORY = "llama-cpp-vlm"
     
     def process(self, any):
-        model_holder.clean()
+        LLAMA_CPP_STORAGE.clean()
         return (any,)
 
 class json_to_bbox:
@@ -477,7 +469,7 @@ class json_to_bbox:
         return {
             "required": {
                 "json": ("STRING", {"forceInput": True}),
-                "mode": (["simple","Qwen3-VL", "Qwen2-VL"], {"default": "simple"}),
+                "mode": (["simple","Qwen3-VL", "Qwen2.5-VL"], {"default": "simple"}),
                 "label": ("STRING", {
                     "default":"",
                     "multiline": False,
@@ -492,7 +484,7 @@ class json_to_bbox:
     RETURN_TYPES = ("BBOX", "IMAGE")
     RETURN_NAMES = ("bboxes", "image")
     FUNCTION = "process"
-    CATEGORY = "llama-cpp-vllm"
+    CATEGORY = "llama-cpp-vlm"
     
     def process(self, json, mode, label, image=None):
         output = []
@@ -509,7 +501,7 @@ class json_to_bbox:
                     images.append(draw_bbox(image[i], bboxes, mode))
                 except Exception as e:
                     raise ValueError(f"Unable to draw bbox on image[{i}]!\n{e}")
-            if mode in ["Qwen3-VL", "Qwen2-VL"]:
+            if mode in ["Qwen3-VL", "Qwen2.5-VL"]:
                 if image is None:
                     raise ValueError(f'When using the "{mode}" mode, the original input image must be connected!')
                 bbox = qwen3bbox(image[i], bboxes)
@@ -545,7 +537,7 @@ class bbox_to_segs:
     
     RETURN_TYPES = ("SEGS",)
     FUNCTION = "process"
-    CATEGORY = "llama-cpp-vllm"
+    CATEGORY = "llama-cpp-vlm"
     
     def process(self, bboxes, image, dilation, feather):
         _batch_size, height, width, _channels = image.shape
@@ -632,7 +624,7 @@ class bbox_to_mask:
     RETURN_TYPES = ("MASK",)
     RETURN_NAMES = ("mask",)
     FUNCTION = "process"
-    CATEGORY = "llama-cpp-vllm"
+    CATEGORY = "llama-cpp-vlm"
     
     def process(self, bboxes, image, dilation, feather):
         masks = []
@@ -706,7 +698,7 @@ class bboxes_to_bbox:
     RETURN_TYPES = ("BBOX",)
     RETURN_NAMES = ("bbox",)
     FUNCTION = "process"
-    CATEGORY = "llama-cpp-vllm"
+    CATEGORY = "llama-cpp-vlm"
     
     def process(self, bboxes, image_index, bbox_index):
         if bbox_index != 999:
@@ -717,7 +709,6 @@ class bboxes_to_bbox:
 NODE_CLASS_MAPPINGS = {
     "llama_cpp_model_loader": llama_cpp_model_loader,
     "llama_cpp_instruct_adv": llama_cpp_instruct_adv,
-    "llama_cpp_instruct": llama_cpp_instruct,
     "llama_cpp_parameters": llama_cpp_parameters,
     "llama_cpp_unload_model": llama_cpp_unload_model,
     "json_to_bbox": json_to_bbox,
@@ -728,8 +719,7 @@ NODE_CLASS_MAPPINGS = {
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "llama_cpp_model_loader": "Llama-cpp Model Loader",
-    "llama_cpp_instruct_adv": "Llama-cpp Instruct (Advanced)",
-    "llama_cpp_instruct": "Llama-cpp Instruct",
+    "llama_cpp_instruct_adv": "Llama-cpp Instruct",
     "llama_cpp_parameters": "Llama-cpp Parameters",
     "llama_cpp_unload_model": "Llama-cpp Unload Model",
     "json_to_bbox": "JSON to BBoxes",
