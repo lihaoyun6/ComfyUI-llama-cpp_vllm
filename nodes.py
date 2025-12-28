@@ -9,6 +9,7 @@ import torch
 import numpy as np
 from PIL import Image, ImageDraw
 from scipy.ndimage import gaussian_filter
+from .cqdm import cqdm
 
 import folder_paths
 import comfy.model_management as mm
@@ -314,7 +315,6 @@ class llama_cpp_instruct_adv:
         return {
             "required": {
                 "llama_model": ("LLAMACPPMODEL",),
-                "parameters": ("LLAMACPPARAMS",),
                 "preset_prompt": (preset_tags, {"default": preset_tags[0]}),
                 "custom_prompt": ("STRING", {"default": "", "multiline": True, "placeholder": 'user_prompt\n\nFor preset hints marked with an "*", this will be used to fill the placeholder (e.g., Object names in BBox detection)\nOtherwise, this will override the preset prompts.'}),
                 "system_prompt": ("STRING", {"multiline": True, "default": ""}),
@@ -329,12 +329,12 @@ class llama_cpp_instruct_adv:
                     "step": 1,
                     "tooltip": 'Number of frames to sample evenly from input video.\n(for "video" mode only)'
                 }),
-                "downscale": ("INT", {
+                "max_size": ("INT", {
                     "default": 256,
                     "min": 128,
                     "max": 16384,
                     "step": 64,
-                    "tooltip": 'Auto-downscale input images in "images" and "video" modes.'
+                    "tooltip": 'Max size of input images in "images" and "video" modes.'
                 }),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "step": 1}),
                 "force_offload": ("BOOLEAN", {
@@ -343,6 +343,7 @@ class llama_cpp_instruct_adv:
                 }),
             },
             "optional": {
+                "parameters": ("LLAMACPPARAMS",),
                 "images": ("IMAGE",),
                 "queue_handler": (any_type, {"tooltip": "Used to control the execution order of instruct nodes."}),
             }
@@ -353,9 +354,25 @@ class llama_cpp_instruct_adv:
     FUNCTION = "process"
     CATEGORY = "llama-cpp-vlm"
     
-    def process(self, llama_model, parameters, preset_prompt, custom_prompt, system_prompt, inference_mode, max_frames, downscale, seed, force_offload, images=None, queue_handler=None):
+    def process(self, llama_model, preset_prompt, custom_prompt, system_prompt, inference_mode, max_frames, max_size, seed, force_offload, parameters=None, images=None, queue_handler=None):
         if not llama_model.llm:
             raise RuntimeError("The model has been unloaded or failed to load!")
+            
+        if parameters is None:
+            parameters = {
+                "max_tokens": 1024,
+                "top_k": 30,
+                "top_p": 0.9,
+                "min_p": 0.05,
+                "typical_p": 1.0,
+                "temperature": 0.8,
+                "repeat_penalty": 1.0,
+                "frequency_penalty": 0.0,
+                "presence_penalty": 1.0,
+                "mirostat_mode": 0,
+                "mirostat_eta": 0.1,
+                "mirostat_tau": 5.0
+            }
         
         video_input = inference_mode == "video"
         messages = []
@@ -387,10 +404,11 @@ class llama_cpp_instruct_adv:
                 }
                 user_content.append(image_content)
                 messages.append({"role": "user", "content": user_content})
-                for i, image in enumerate(frames):
+                print(f"[llama-cpp_vlm] Start processing {len(frames)} images")
+                
+                for i, image in enumerate(cqdm(frames)):
                     if mm.processing_interrupted():
                         raise mm.InterruptProcessingException()
-                    print(f"[llama-cpp_vlm] Reading image {i+1}/{len(frames)}...")
                     data = image2base64(np.clip(255.0 * image.cpu().numpy().squeeze(), 0, 255).astype(np.uint8))
                     for item in user_content:
                         if item.get("type") == "image_url":
@@ -403,7 +421,7 @@ class llama_cpp_instruct_adv:
             else:
                 for image in frames:
                     if len(frames) > 1:
-                        data = image2base64(scale_image(image, downscale))
+                        data = image2base64(scale_image(image, max_size))
                     else:
                         data = image2base64(np.clip(255.0 * image.cpu().numpy().squeeze(), 0, 255).astype(np.uint8))
                     image_content = {
