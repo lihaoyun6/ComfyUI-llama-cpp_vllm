@@ -9,7 +9,8 @@ import torch
 import numpy as np
 from PIL import Image, ImageDraw
 from scipy.ndimage import gaussian_filter
-from .cqdm import cqdm
+from .support.cqdm import cqdm
+from .support.gguf_layers import get_layer_count
 
 import folder_paths
 import comfy.model_management as mm
@@ -107,20 +108,32 @@ class LLAMA_CPP_STORAGE:
         cls.clean()
         cls.current_config = config.copy()
         model = config["model"]
-        mmproj_model = config["mmproj_model"]
+        mmproj = config["mmproj"]
         chat_handler = config["chat_handler"]
         n_ctx = config["n_ctx"]
-        n_gpu_layers = config["n_gpu_layers"]
+        vram_limit = config["vram_limit"]
         image_max_tokens = config["image_max_tokens"]
         image_min_tokens = config["image_min_tokens"]
+        n_gpu_layers = -1
         
         model_path = os.path.join(folder_paths.models_dir, 'LLM', model)
         handler = get_chat_handler(chat_handler)
-        if mmproj_model and mmproj_model != "None":
-            mmproj_path = os.path.join(folder_paths.models_dir, 'LLM', mmproj_model)
+        
+        if vram_limit != -1:
+            gguf_layers = get_layer_count(model_path) or 32
+            gguf_size = os.path.getsize(model_path)  * 1.55 / (1024 ** 3)
+            gguf_layer_size = gguf_size / gguf_layers
+        
+        if mmproj and mmproj != "None":
+            mmproj_path = os.path.join(folder_paths.models_dir, 'LLM', mmproj)
             if chat_handler == "None":
                 raise ValueError('"chat_handler" cannot be None!')
-            print(f"Loading mmproj from {mmproj_path}")
+            
+            if vram_limit != -1:
+                mmproj_size = os.path.getsize(mmproj_path)  * 1.55 / (1024 ** 3)
+                n_gpu_layers = max(1, int((vram_limit - mmproj_size) / gguf_layer_size))
+            
+            print(f"[llama-cpp_vlm] Loading clip:  {mmproj}")
             if chat_handler in ["Qwen3-VL", "Qwen3-VL-Thinking"]:
                 think_mode = chat_handler=="Qwen3-VL-Thinking"
                 try:
@@ -141,9 +154,13 @@ class LLAMA_CPP_STORAGE:
             else:
                 cls.chat_handler = handler(clip_model_path=mmproj_path, verbose=False)
         else:
+            if vram_limit != -1:
+                n_gpu_layers = max(1, int(vram_limit / gguf_layer_size))
             if handler is not None:
                 cls.chat_handler = handler(verbose=False)
-        print(f"Loading model from {model_path}")
+        
+        print(f"[llama-cpp_vlm] Loading model: {model}")
+        print(f"[llama-cpp_vlm] n_gpu_layers = {n_gpu_layers}")
         cls.llm = Llama(model_path, chat_handler=cls.chat_handler, n_gpu_layers=n_gpu_layers, n_ctx=n_ctx, verbose=False)
 
 any_type = AnyType("*")
@@ -255,17 +272,17 @@ class llama_cpp_model_loader:
             
         return {"required": {
             "model": (model_list,),
-            "mmproj_model": (mmproj_list, {"default": "None"}),
+            "mmproj": (mmproj_list, {"default": "None"}),
             "chat_handler": (chat_handlers, {"default": "None"}),
             "n_ctx": ("INT", {
                 "default": 8192,
                 "min": 1024, "max": 327680, "step": 128,
                 "tooltip": "Context length limit."
             }),
-            "n_gpu_layers": ("INT", {
+            "vram_limit": ("INT", {
                 "default": -1,
-                "min": -1, "max": 4096, "step": 1,
-                "tooltip": "Number of layers to keep on GPU."
+                "min": -1, "max": 1024, "step": 1,
+                "tooltip": "VRAM usage limit in GB (-1 = no limit)\nReference range; actual usage may slightly exceed."
             }),
             "image_min_tokens": ("INT", {"default": 0, "min": 0, "max": 4096, "step": 32}),
             "image_max_tokens": ("INT", {"default": 0, "min": 0, "max": 4096, "step": 32}),
@@ -278,29 +295,29 @@ class llama_cpp_model_loader:
     CATEGORY = "llama-cpp-vlm"
     
     @classmethod
-    def IS_CHANGED(s, model, mmproj_model, chat_handler, n_ctx, n_gpu_layers, image_min_tokens, image_max_tokens):
+    def IS_CHANGED(s, model, mmproj, chat_handler, n_ctx, vram_limit, image_min_tokens, image_max_tokens):
         if LLAMA_CPP_STORAGE.llm is None:
             return float("NaN") 
         
         custom_config = {
             "model": model,
-            "mmproj_model": mmproj_model,
+            "mmproj": mmproj,
             "chat_handler":chat_handler,
             "n_ctx": n_ctx,
-            "n_gpu_layers": n_gpu_layers,
+            "vram_limit": vram_limit,
             "image_min_tokens": image_min_tokens,
             "image_max_tokens": image_max_tokens
         }
         config_str = json.dumps(custom_config, sort_keys=True, ensure_ascii=False)
         return config_str
 
-    def loadmodel(self, model, mmproj_model, chat_handler, n_ctx, n_gpu_layers, image_min_tokens, image_max_tokens):
+    def loadmodel(self, model, mmproj, chat_handler, n_ctx, vram_limit, image_min_tokens, image_max_tokens):
         custom_config = {
             "model": model,
-            "mmproj_model": mmproj_model,
+            "mmproj": mmproj,
             "chat_handler":chat_handler,
             "n_ctx": n_ctx,
-            "n_gpu_layers": n_gpu_layers,
+            "vram_limit": vram_limit,
             "image_min_tokens": image_min_tokens,
             "image_max_tokens": image_max_tokens
         }
@@ -389,7 +406,7 @@ class llama_cpp_instruct_adv:
             
         if images is not None:
             if not hasattr(llama_model.chat_handler, "clip_model_path") or llama_model.chat_handler.clip_model_path is None:
-                 raise ValueError("Image input detected, but the loaded model is not configured with a vision module (mmproj).")
+                 raise ValueError("Image input detected, but the loaded model is not configured with a mmproj module.")
                 
             frames = images
             if video_input:
@@ -508,6 +525,9 @@ class json_to_bbox:
     CATEGORY = "llama-cpp-vlm"
     
     def process(self, json, mode, label, image=None):
+        if isinstance(json, str):
+            json = [json]
+            
         output = []
         images = []
         for i, j in enumerate(json):

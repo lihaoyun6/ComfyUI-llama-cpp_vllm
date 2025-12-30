@@ -2,6 +2,7 @@ diskcache
 scipy
 numpy
 pillow
+gguf
 
 # for Windows
 llama-cpp-python @ https://github.com/JamePeng/llama-cpp-python/releases/download/v0.3.18-cu126-AVX2-win-20251220/llama_cpp_python-0.3.18-cp310-cp310-win_amd64.whl; python_version == "3.10" and platform_system == "Windows"
