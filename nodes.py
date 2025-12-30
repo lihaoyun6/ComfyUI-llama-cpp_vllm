@@ -828,8 +828,8 @@ class remove_code_block:
             },
         }
     
-    RETURN_TYPES = ("STRING")
-    RETURN_NAMES = ("output")
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("output",)
     FUNCTION = "process"
     CATEGORY = "llama-cpp-vlm"
     
