@@ -428,7 +428,7 @@ class llama_cpp_instruct_adv:
         _uid = parameters.get("state_uid", None)
         _parameters = parameters.copy()
         _parameters.pop("state_uid", None)
-        uid = unique_id if _uid in (None, -1) else _uid
+        uid = unique_id.rpartition('.')[-1] if _uid in (None, -1) else _uid
         
         last_sys_prompt = llama_model.sys_prompts.get(f"{uid}", None)
         video_input = inference_mode == "video"
@@ -561,7 +561,7 @@ class llama_cpp_clean_states:
         return {
             "required": {
                 "any": (any_type,),
-                "uid": ("INT", {
+                "state_uid": ("INT", {
                     "default": -1, "min": -1, "max": 999999, "step": 1,
                     "tooltip": "Clear the saved state for a specific ID (-1 = clear all)"
                 }),
@@ -573,9 +573,9 @@ class llama_cpp_clean_states:
     FUNCTION = "process"
     CATEGORY = "llama-cpp-vlm"
     
-    def process(self, any, uid):
-        print("[llama-cpp_vlm] Cleaning up saved states...")
-        LLAMA_CPP_STORAGE.clean_state(uid)
+    def process(self, any, state_uid):
+        print(f"[llama-cpp_vlm] Cleaning up saved states {state_uid}...")
+        LLAMA_CPP_STORAGE.clean_state(state_uid)
         return (any,)
 
 class llama_cpp_unload_model:
