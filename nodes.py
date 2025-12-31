@@ -52,9 +52,23 @@ class LLAMA_CPP_STORAGE:
     llm = None
     chat_handler = None
     current_config = None
-    
+    states = {}
+    messages = {}
+    sys_prompts = {}
+
     @classmethod
-    def clean(cls):
+    def clean_state(cls, id=-1):
+        if id == -1:
+            cls.states.clear()
+            cls.messages.clear()
+            cls.sys_prompts.clear()
+        else:
+            cls.states.pop(f"{id}", None)
+            cls.messages.pop(f"{id}", None)
+            cls.sys_prompts.pop(f"{id}", None)
+        
+    @classmethod
+    def clean(cls, all=False):
         try:
             cls.llm.close()
         except Exception:
@@ -68,6 +82,8 @@ class LLAMA_CPP_STORAGE:
         cls.llm = None
         cls.chat_handler = None
         cls.current_config = None
+        if all:
+            cls.clean_state()
         
         gc.collect()
         mm.soft_empty_cache()
@@ -105,7 +121,7 @@ class LLAMA_CPP_STORAGE:
                 case _:
                     raise ValueError(f'Unknow model type: "{chat_handler}"')
         
-        cls.clean()
+        cls.clean(all=True)
         cls.current_config = config.copy()
         model = config["model"]
         mmproj = config["mmproj"]
@@ -168,7 +184,7 @@ any_type = AnyType("*")
 if not hasattr(mm, "unload_all_models_backup"):
     mm.unload_all_models_backup = mm.unload_all_models
     def patched_unload_all_models(*args, **kwargs):
-        LLAMA_CPP_STORAGE.clean()
+        LLAMA_CPP_STORAGE.clean(all=True)
         result = mm.unload_all_models_backup(*args, **kwargs)
         return result
     mm.unload_all_models = patched_unload_all_models
@@ -358,23 +374,41 @@ class llama_cpp_instruct_adv:
                     "default": False,
                     "tooltip": "Unload the model after inference."
                 }),
+                "save_states": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "Preserve the context of this conversation in RAM."
+                }),
+            },
+            "hidden": {
+                "unique_id": "UNIQUE_ID",
             },
             "optional": {
                 "parameters": ("LLAMACPPARAMS",),
                 "images": ("IMAGE",),
                 "queue_handler": (any_type, {"tooltip": "Used to control the execution order of instruct nodes."}),
-            }
+            },
+            
         }
     
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("output",)
+    RETURN_TYPES = ("STRING", "INT")
+    RETURN_NAMES = ("output", "state_uid")
     FUNCTION = "process"
     CATEGORY = "llama-cpp-vlm"
     
-    def process(self, llama_model, preset_prompt, custom_prompt, system_prompt, inference_mode, max_frames, max_size, seed, force_offload, parameters=None, images=None, queue_handler=None):
+    def sanitize_messages(self, messages):
+        clean_messages = messages.copy()
+        for msg in clean_messages:
+            content = msg.get("content")
+            if isinstance(content, list):
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") == "image_url":
+                        item["image_url"]["url"] = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAACXBIWXMAAAsTAAALEwEAmpwYAAAADElEQVQImWP4//8/AAX+Av5Y8msOAAAAAElFTkSuQmCC"
+        return clean_messages
+    
+    def process(self, llama_model, preset_prompt, custom_prompt, system_prompt, inference_mode, max_frames, max_size, seed, force_offload, save_states, unique_id, parameters=None, images=None, queue_handler=None):
         if not llama_model.llm:
             raise RuntimeError("The model has been unloaded or failed to load!")
-            
+        
         if parameters is None:
             parameters = {
                 "max_tokens": 1024,
@@ -391,11 +425,30 @@ class llama_cpp_instruct_adv:
                 "mirostat_tau": 5.0
             }
         
+        _uid = parameters.get("state_uid", None)
+        _parameters = parameters.copy()
+        _parameters.pop("state_uid", None)
+        uid = unique_id if _uid in (None, -1) else _uid
+        
+        last_sys_prompt = llama_model.sys_prompts.get(f"{uid}", None)
         video_input = inference_mode == "video"
-        messages = []
         system_prompts = "请将输入的图片序列当做视频而不是静态帧序列, " + system_prompt if video_input else system_prompt
-        if system_prompts.strip():
-            messages.append({"role": "system", "content": system_prompts})
+        if last_sys_prompt != system_prompts:
+            messages = []
+            llama_model.clean_state()
+            llama_model.sys_prompts[f"{uid}"] = system_prompts
+            if system_prompts.strip():
+                messages.append({"role": "system", "content": system_prompts})
+        else:
+            if save_states:
+                try:
+                    print(f"[llama-cpp_vlm] Loading state and history id={uid}...")
+                    llama_model.llm.load_state(llama_model.states[f"{uid}"])
+                    messages = llama_model.messages.get(f"{uid}", [])
+                except Exception as e:
+                    messages = []
+            else:
+                messages = []
             
         user_content = []
         if custom_prompt.strip() and "*" not in preset_prompt:
@@ -431,7 +484,7 @@ class llama_cpp_instruct_adv:
                         if item.get("type") == "image_url":
                             item["image_url"]["url"] = f"data:image/jpeg;base64,{data}"
                             break
-                    output = llama_model.llm.create_chat_completion(messages=messages, seed=seed, **parameters)
+                    output = llama_model.llm.create_chat_completion(messages=messages, seed=seed, **_parameters)
                     _text = output['choices'][0]['message']['content']
                     _text = _text[2:].lstrip() if _text.startswith(": ") else _text.lstrip() 
                     text.append(_text)
@@ -448,23 +501,34 @@ class llama_cpp_instruct_adv:
                     user_content.append(image_content)
                     
                 messages.append({"role": "user", "content": user_content})
-                output = llama_model.llm.create_chat_completion(messages=messages, seed=seed, **parameters)
+                output = llama_model.llm.create_chat_completion(messages=messages, seed=seed, **_parameters)
                 text = output['choices'][0]['message']['content']
                 text = text[2:].lstrip() if text.startswith(": ") else text.lstrip() 
         else:
             messages.append({"role": "user", "content": user_content})
-            output = llama_model.llm.create_chat_completion(messages=messages, seed=seed, **parameters)
+            output = llama_model.llm.create_chat_completion(messages=messages, seed=seed, **_parameters)
             text = output['choices'][0]['message']['content']
             text = text[2:].lstrip() if text.startswith(": ") else text.lstrip()
         
+        if save_states:
+            print(f"[llama-cpp_vlm] Saving state id={uid}...")
+            llama_model.states[f"{uid}"] = llama_model.llm.save_state()
+            messages.append({"role": "assistant", "content": text})
+            clear_message = self.sanitize_messages(messages)
+            llama_model.messages[f"{uid}"] = clear_message
+            
         if force_offload:
             llama_model.clean()
-        return (text,)
+            
+        del messages
+        gc.collect()
+        return (text,uid)
 
 class llama_cpp_parameters:
     @classmethod
     def INPUT_TYPES(s):
-        return {"required": {
+        return {
+            "required": {
                 "max_tokens": ("INT", {"default": 1024, "min": 0, "max": 4096, "step": 1}),
                 "top_k": ("INT", {"default": 30, "min": 0, "max": 1000, "step": 1}),
                 "top_p": ("FLOAT", {"default": 0.9, "min": 0.0, "max": 1.0, "step": 0.01}),
@@ -478,7 +542,11 @@ class llama_cpp_parameters:
                 "mirostat_mode": ("INT", {"default": 0, "min": 0, "max": 2, "step": 1}),
                 "mirostat_eta": ("FLOAT", {"default": 0.1, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "mirostat_tau": ("FLOAT", {"default": 5.0, "min": 0.0, "max": 10.0, "step": 0.01}),
-                }
+                "state_uid": ("INT", {
+                    "default": -1, "min": -1, "max": 999999, "step": 1,
+                    "tooltip": "Use a specific ID to save the conversation state.\n(-1 = use node's unique_id)"
+                }),
+            }
         }
     RETURN_TYPES = ("LLAMACPPARAMS",)
     RETURN_NAMES = ("parameters",)
@@ -487,6 +555,29 @@ class llama_cpp_parameters:
     def process(self, **kwargs):
         return (kwargs,)
     
+class llama_cpp_clean_states:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "any": (any_type,),
+                "uid": ("INT", {
+                    "default": -1, "min": -1, "max": 999999, "step": 1,
+                    "tooltip": "Clear the saved state for a specific ID (-1 = clear all)"
+                }),
+            },
+        }
+    
+    RETURN_TYPES = (any_type,)
+    RETURN_NAMES = ("any",)
+    FUNCTION = "process"
+    CATEGORY = "llama-cpp-vlm"
+    
+    def process(self, any, uid):
+        print("[llama-cpp_vlm] Cleaning up saved states...")
+        LLAMA_CPP_STORAGE.clean_state(uid)
+        return (any,)
+
 class llama_cpp_unload_model:
     @classmethod
     def INPUT_TYPES(s):
@@ -498,6 +589,7 @@ class llama_cpp_unload_model:
     CATEGORY = "llama-cpp-vlm"
     
     def process(self, any):
+        print("[llama-cpp_vlm] Unloading llama model...")
         LLAMA_CPP_STORAGE.clean()
         return (any,)
 
@@ -849,6 +941,7 @@ NODE_CLASS_MAPPINGS = {
     "llama_cpp_instruct_adv": llama_cpp_instruct_adv,
     "llama_cpp_parameters": llama_cpp_parameters,
     "llama_cpp_unload_model": llama_cpp_unload_model,
+    "llama_cpp_clean_states": llama_cpp_clean_states,
     "parse_json_node": parse_json_node,
     "json_to_bbox": json_to_bbox,
     "bbox_to_segs": bbox_to_segs,
@@ -862,6 +955,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "llama_cpp_instruct_adv": "Llama-cpp Instruct",
     "llama_cpp_parameters": "Llama-cpp Parameters",
     "llama_cpp_unload_model": "Llama-cpp Unload Model",
+    "llama_cpp_clean_states": "Llama-cpp Clean States",
     "parse_json_node": "Parse JSON",
     "json_to_bbox": "JSON to BBoxes",
     "bbox_to_segs": "BBoxes to SEGS",
