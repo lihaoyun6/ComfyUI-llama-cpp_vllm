@@ -497,9 +497,11 @@ class llama_cpp_instruct_adv:
                             break
                     output = llama_model.llm.create_chat_completion(messages=messages, seed=seed, **_parameters)
                     text = output['choices'][0]['message']['content'].removeprefix(": ").lstrip()
-                    tmp_list.append(f"====== Image {i+1} ======")
-                    tmp_list.append(text)
                     out2.append(text)
+                    if len(frames) > 1:
+                        tmp_list.append(f"====== Image {i+1} ======")
+                        tmp_list.append(text)
+                        
                 out1 = "\n\n".join(tmp_list)
             else:
                 for image in frames:
