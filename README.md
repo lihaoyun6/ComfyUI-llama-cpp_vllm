@@ -18,9 +18,6 @@ git clone https://github.com/lihaoyun6/ComfyUI-llama-cpp.git
 python -m pip install -r ComfyUI-llama-cpp/requirements.txt
 ```
 
-#### Install llama.cpp  
-- Install a prebuilt wheel from [https://github.com/JamePeng/llama-cpp-python/releases](https://github.com/JamePeng/llama-cpp-python/releases), or build it from source according to your system.  
-
 #### Download models:  
 - Place your model files in the `ComfyUI/models/LLM` folder.  
 
