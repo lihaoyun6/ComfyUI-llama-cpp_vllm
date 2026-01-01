@@ -880,7 +880,9 @@ class parse_json_node:
         for i, json in enumerate(input):
             val = ""
             if key is not None and key != "":
-                val = get_nested_value(input.strip().removeprefix("```json").removesuffix("```"), key, default)
+                val = get_nested_value(json.strip().removeprefix("```json").removesuffix("```"), key, default)
+            else:
+                raise ValueError("Key cannot be empty!")
             
             result["any"][i] = val
             try:
