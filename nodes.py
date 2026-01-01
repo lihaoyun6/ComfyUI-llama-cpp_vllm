@@ -26,6 +26,12 @@ from llama_cpp.llama_chat_format import (
 chat_handlers = ["None", "LLaVA-1.5", "LLaVA-1.6", "Moondream2", "nanoLLaVA", "llama3-Vision-Alpha", "MiniCPM-v2.6", "MiniCPM-v4"]
 
 try:
+    from llama_cpp.llama_chat_format import Gemma3ChatHandler
+    chat_handlers += ["Gemma3"]
+except:
+    Gemma3ChatHandler = None
+
+try:
     from llama_cpp.llama_chat_format import Qwen25VLChatHandler
     chat_handlers += ["Qwen2.5-VL"]
 except:
@@ -111,6 +117,8 @@ class LLAMA_CPP_STORAGE:
                     return MiniCPMv26ChatHandler
                 case "MiniCPM-v4":
                     return MiniCPMv26ChatHandler
+                case "Gemma3":
+                    return Gemma3ChatHandler
                 case "GLM-4.6V":
                     return GLM46VChatHandler
                 case "GLM-4.1V-Thinking":
